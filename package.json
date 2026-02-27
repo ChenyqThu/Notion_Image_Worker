@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@google/genai": "^1.43.0",
+    "@notionhq/client": "^5.11.0"
+  }
+}
