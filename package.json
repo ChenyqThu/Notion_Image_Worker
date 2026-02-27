@@ -1,6 +1,23 @@
 {
-  "dependencies": {
-    "@google/genai": "^1.43.0",
-    "@notionhq/client": "^5.11.0"
-  }
+	"name": "@notionhq/workers-template",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"build": "tsc",
+		"check": "tsc --noEmit"
+	},
+	"engines": {
+		"node": ">=22.0.0",
+		"npm": ">=10.9.2"
+	},
+	"devDependencies": {
+		"@types/node": "^22.9.0",
+		"tsx": "^4.20.6",
+		"typescript": "^5.8.0"
+	},
+	"dependencies": {
+		"@google/genai": "^1.43.0",
+		"@notionhq/client": "^2.3.0",
+		"@notionhq/workers": "^0.0.85"
+	}
 }
