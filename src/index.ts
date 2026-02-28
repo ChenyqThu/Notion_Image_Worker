@@ -4,18 +4,82 @@ import { expandPrompt, generateImage } from "./gemini";
 
 const worker = new Worker();
 export default worker;
-
-// Assume the user sets their Notion integration token in the .env
-const notion = new Client({ auth: process.env.NOTION_API_KEY });
+const NOTION_API_BASE_URL = "https://api.notion.com/v1";
+const NOTION_API_VERSION = "2022-06-28";
 
 type GenerateImageInput = {
 	short_description: string;
 	page_id: string; // the page to embed the image into
 };
 
+function extensionFromMimeType(mimeType: string): string {
+	switch (mimeType) {
+		case "image/jpeg":
+			return "jpg";
+		case "image/png":
+			return "png";
+		case "image/webp":
+			return "webp";
+		default:
+			return "bin";
+	}
+}
+
+async function uploadImageWithNotionFileApi(
+	notionApiKey: string,
+	imageBytes: Uint8Array,
+	mimeType: string,
+): Promise<string> {
+	const fileName = `nano-banana.${extensionFromMimeType(mimeType)}`;
+	const createResponse = await fetch(`${NOTION_API_BASE_URL}/file_uploads`, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${notionApiKey}`,
+			"Notion-Version": NOTION_API_VERSION,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			filename: fileName,
+			content_type: mimeType,
+			mode: "single_part",
+		}),
+	});
+
+	if (!createResponse.ok) {
+		throw new Error(`Notion file upload create failed: ${createResponse.status}`);
+	}
+
+	const createPayload = (await createResponse.json()) as {
+		id?: string;
+		upload_url?: string;
+	};
+	if (!createPayload.id) {
+		throw new Error("Notion file upload create did not return an id.");
+	}
+
+	const uploadUrl = createPayload.upload_url;
+	if (!uploadUrl) {
+		throw new Error("Notion file upload create did not return an upload_url.");
+	}
+
+	const uploadForm = new FormData();
+	const fileBuffer = Buffer.from(imageBytes);
+	uploadForm.append("file", new Blob([fileBuffer], { type: mimeType }), fileName);
+	const sendResponse = await fetch(uploadUrl, {
+		method: "POST",
+		body: uploadForm,
+	});
+
+	if (!sendResponse.ok) {
+		throw new Error(`Notion file upload send failed: ${sendResponse.status}`);
+	}
+
+	return createPayload.id;
+}
+
 worker.tool<GenerateImageInput, string>("generateNanoBananaImage", {
 	title: "Generate Nano Banana Image",
-	description: "Expands a short image description into a highly detailed Nano Banana Pro prompt, generates the image using Gemini Imagen, and returns the uploaded image to Notion.",
+	description: "Expands a short image description into a highly detailed Nano Banana prompt, generates an image using Gemini 3.1 Flash Image, and uploads it to Notion.",
 	schema: {
 		type: "object",
 		properties: {
@@ -33,6 +97,11 @@ worker.tool<GenerateImageInput, string>("generateNanoBananaImage", {
 	},
 	execute: async ({ short_description, page_id }) => {
 		try {
+			const notionApiKey = process.env.NOTION_API_KEY;
+			if (!notionApiKey) {
+				throw new Error("NOTION_API_KEY is not configured.");
+			}
+
 			// 1. Expand the prompt
 			console.log(`Expanding prompt for: ${short_description}`);
 			const expandedPrompt = await expandPrompt(short_description);
@@ -40,18 +109,18 @@ worker.tool<GenerateImageInput, string>("generateNanoBananaImage", {
 
 			// 2. Generate the Image
 			console.log(`Generating image from expanded prompt...`);
-			const imageBytes = await generateImage(expandedPrompt);
+			const generatedImage = await generateImage(expandedPrompt);
 
-			// 3. Upload the image to Notion
-			// Notion's API for image blocks requires a URL.
-			// Since we have raw bytes, we need to convert them to a data URI
-			// and then use that as an external URL.
-			// Note: For production, you'd typically upload to a cloud storage (S3, Cloudinary)
-			// and use that permanent URL. Data URIs can be very large and might have limitations.
-			const base64Image = Buffer.from(imageBytes).toString('base64');
-			const dataUri = `data:image/jpeg;base64,${base64Image}`;
+			// 3. Upload image bytes via Notion File Upload API
+			console.log(`Uploading image binary via Notion File Upload API...`);
+			const fileUploadId = await uploadImageWithNotionFileApi(
+				notionApiKey,
+				generatedImage.bytes,
+				generatedImage.mimeType,
+			);
 
 			console.log(`Uploading image to Notion page: ${page_id}`);
+			const notion = new Client({ auth: notionApiKey });
 			await notion.blocks.children.append({
 				block_id: page_id,
 				children: [
@@ -59,12 +128,12 @@ worker.tool<GenerateImageInput, string>("generateNanoBananaImage", {
 						object: 'block',
 						type: 'image',
 						image: {
-							type: 'external',
-							external: {
-								url: dataUri,
+							type: "file_upload",
+							file_upload: {
+								id: fileUploadId,
 							},
 						},
-					},
+					} as any,
 					{
 						object: 'block',
 						type: 'paragraph',
