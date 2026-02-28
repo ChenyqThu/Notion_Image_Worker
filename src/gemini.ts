@@ -15,68 +15,68 @@ Return ONLY the final expanded prompt. Do not include any conversational filler.
 `;
 
 export async function expandPrompt(shortDescription: string): Promise<string> {
-	const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-	const promptModel = process.env.GEMINI_PROMPT_MODEL || "gemini-3-flash";
-	const response = await ai.models.generateContent({
-		model: promptModel,
-		contents: shortDescription,
-		config: {
-			systemInstruction: SYSTEM_PROMPT,
-		},
-	});
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const promptModel = process.env.GEMINI_PROMPT_MODEL || "gemini-2.5-flash";
+    const response = await ai.models.generateContent({
+        model: promptModel,
+        contents: shortDescription,
+        config: {
+            systemInstruction: SYSTEM_PROMPT,
+        },
+    });
 
-	if (!response.text) {
-		throw new Error("Failed to generate expanded prompt.");
-	}
-	return response.text.trim();
+    if (!response.text) {
+        throw new Error("Failed to generate expanded prompt.");
+    }
+    return response.text.trim();
 }
 
 function decodeBinaryString(binaryString: string): Uint8Array {
-	const bytes = new Uint8Array(binaryString.length);
-	for (let i = 0; i < binaryString.length; i++) {
-		bytes[i] = binaryString.charCodeAt(i);
-	}
-	return bytes;
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
 }
 
 type GeneratedImage = {
-	bytes: Uint8Array;
-	mimeType: string;
+    bytes: Uint8Array;
+    mimeType: string;
 };
 
 export async function generateImage(expandedPrompt: string): Promise<GeneratedImage> {
-	const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-	const imageModel =
-		process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image-preview";
-	const imageAspectRatio = process.env.GEMINI_IMAGE_ASPECT_RATIO || "1:1";
-	const response = await ai.models.generateContent({
-		model: imageModel,
-		contents: expandedPrompt,
-		config: {
-			responseModalities: [Modality.IMAGE],
-			imageConfig: {
-				aspectRatio: imageAspectRatio,
-			},
-		},
-	});
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const imageModel =
+        process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image-preview";
+    const imageAspectRatio = process.env.GEMINI_IMAGE_ASPECT_RATIO || "1:1";
+    const response = await ai.models.generateContent({
+        model: imageModel,
+        contents: expandedPrompt,
+        config: {
+            responseModalities: [Modality.IMAGE],
+            imageConfig: {
+                aspectRatio: imageAspectRatio,
+            },
+        },
+    });
 
-	const parts = response.candidates?.[0]?.content?.parts ?? [];
-	for (const part of parts) {
-		const inlineData = part.inlineData;
-		if (inlineData?.data) {
-			return {
-				bytes: decodeBinaryString(atob(inlineData.data)),
-				mimeType: inlineData.mimeType || "image/png",
-			};
-		}
-	}
+    const parts = response.candidates?.[0]?.content?.parts ?? [];
+    for (const part of parts) {
+        const inlineData = part.inlineData;
+        if (inlineData?.data) {
+            return {
+                bytes: decodeBinaryString(atob(inlineData.data)),
+                mimeType: inlineData.mimeType || "image/png",
+            };
+        }
+    }
 
-	if (response.data) {
-		return {
-			bytes: decodeBinaryString(response.data),
-			mimeType: "image/png",
-		};
-	}
+    if (response.data) {
+        return {
+            bytes: decodeBinaryString(response.data),
+            mimeType: "image/png",
+        };
+    }
 
-	throw new Error("Failed to generate image bytes from Gemini response.");
+    throw new Error("Failed to generate image bytes from Gemini response.");
 }
