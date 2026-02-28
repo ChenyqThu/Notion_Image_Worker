@@ -1,6 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
-
-const ai = new GoogleGenAI({});
+import { GoogleGenAI, Modality } from "@google/genai";
 
 const SYSTEM_PROMPT = `
 You are an expert prompt engineer specializing in creating prompts for the Nano Banana Pro (and Imagen) image generation model.
@@ -17,54 +15,68 @@ Return ONLY the final expanded prompt. Do not include any conversational filler.
 `;
 
 export async function expandPrompt(shortDescription: string): Promise<string> {
-    const promptModel = process.env.GEMINI_PROMPT_MODEL || 'gemini-3-flash';
-    const response = await ai.models.generateContent({
-        model: promptModel,
-        contents: shortDescription,
-        config: {
-            systemInstruction: SYSTEM_PROMPT,
-        }
-    });
+	const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+	const promptModel = process.env.GEMINI_PROMPT_MODEL || "gemini-3-flash";
+	const response = await ai.models.generateContent({
+		model: promptModel,
+		contents: shortDescription,
+		config: {
+			systemInstruction: SYSTEM_PROMPT,
+		},
+	});
 
-    if (!response.text) {
-        throw new Error("Failed to generate expanded prompt.");
-    }
-    return response.text.trim();
+	if (!response.text) {
+		throw new Error("Failed to generate expanded prompt.");
+	}
+	return response.text.trim();
 }
 
-export async function generateImage(expandedPrompt: string): Promise<Uint8Array> {
-    const imageModel = process.env.GEMINI_IMAGE_MODEL || 'imagen-3.0-generate-002';
-    // Note: Use the appropriate Imagen model available in the @google/genai SDK
-    const response = await ai.models.generateImages({
-        model: imageModel,
-        prompt: expandedPrompt,
-        config: {
-            numberOfImages: 1,
-            outputMimeType: 'image/jpeg',
-            aspectRatio: '1:1'
-        }
-    });
+function decodeBinaryString(binaryString: string): Uint8Array {
+	const bytes = new Uint8Array(binaryString.length);
+	for (let i = 0; i < binaryString.length; i++) {
+		bytes[i] = binaryString.charCodeAt(i);
+	}
+	return bytes;
+}
 
-    if (!response.generatedImages || response.generatedImages.length === 0) {
-        throw new Error("Failed to generate image.");
-    }
+type GeneratedImage = {
+	bytes: Uint8Array;
+	mimeType: string;
+};
 
-    const imageObj = response.generatedImages[0].image;
-    if (!imageObj) {
-        throw new Error("No image object returned");
-    }
+export async function generateImage(expandedPrompt: string): Promise<GeneratedImage> {
+	const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+	const imageModel =
+		process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image-preview";
+	const imageAspectRatio = process.env.GEMINI_IMAGE_ASPECT_RATIO || "1:1";
+	const response = await ai.models.generateContent({
+		model: imageModel,
+		contents: expandedPrompt,
+		config: {
+			responseModalities: [Modality.IMAGE],
+			imageConfig: {
+				aspectRatio: imageAspectRatio,
+			},
+		},
+	});
 
-    const base64Image = imageObj.imageBytes;
-    if (!base64Image) {
-        throw new Error("No image bytes returned");
-    }
+	const parts = response.candidates?.[0]?.content?.parts ?? [];
+	for (const part of parts) {
+		const inlineData = part.inlineData;
+		if (inlineData?.data) {
+			return {
+				bytes: decodeBinaryString(atob(inlineData.data)),
+				mimeType: inlineData.mimeType || "image/png",
+			};
+		}
+	}
 
-    // Convert base64 string to Uint8Array
-    const binaryString = atob(base64Image);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-    }
+	if (response.data) {
+		return {
+			bytes: decodeBinaryString(response.data),
+			mimeType: "image/png",
+		};
+	}
 
-    return bytes;
+	throw new Error("Failed to generate image bytes from Gemini response.");
 }
