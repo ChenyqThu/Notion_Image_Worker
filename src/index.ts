@@ -1,80 +1,40 @@
 import { Worker } from "@notionhq/workers";
 import { Client } from "@notionhq/client";
 import { expandPrompt, generateImage } from "./gemini";
+import FormData from "form-data";
+import fetch from "node-fetch";
 
 const worker = new Worker();
 export default worker;
-const NOTION_API_BASE_URL = "https://api.notion.com/v1";
-const NOTION_API_VERSION = "2022-06-28";
 
 type GenerateImageInput = {
 	short_description: string;
 	page_id: string; // the page to embed the image into
 };
 
-function extensionFromMimeType(mimeType: string): string {
-	switch (mimeType) {
-		case "image/jpeg":
-			return "jpg";
-		case "image/png":
-			return "png";
-		case "image/webp":
-			return "webp";
-		default:
-			return "bin";
-	}
-}
+async function uploadToFreeImageHost(base64Image: string): Promise<string> {
+	const apiKey = '6d207e02198a847aa98d0a2a901485a5';
+	const form = new FormData();
+	form.append('key', apiKey);
+	form.append('action', 'upload');
+	form.append('source', base64Image);
+	form.append('format', 'json');
 
-async function uploadImageWithNotionFileApi(
-	notionApiKey: string,
-	imageBytes: Uint8Array,
-	mimeType: string,
-): Promise<string> {
-	const fileName = `nano-banana.${extensionFromMimeType(mimeType)}`;
-	const createResponse = await fetch(`${NOTION_API_BASE_URL}/file_uploads`, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${notionApiKey}`,
-			"Notion-Version": NOTION_API_VERSION,
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-			filename: fileName,
-			content_type: mimeType,
-			mode: "single_part",
-		}),
+	const res = await fetch('https://freeimage.host/api/1/upload', {
+		method: 'POST',
+		body: form
 	});
 
-	if (!createResponse.ok) {
-		throw new Error(`Notion file upload create failed: ${createResponse.status}`);
+	if (!res.ok) {
+		throw new Error(`Failed to upload to freeimage.host: ${res.status}`);
 	}
 
-	const createPayload = (await createResponse.json()) as {
-		id?: string;
-		upload_url?: string;
-	};
-	if (!createPayload.id) {
-		throw new Error("Notion file upload create did not return an id.");
+	const data = await res.json() as any;
+	if (!data || !data.image || !data.image.url) {
+		throw new Error(`Invalid response from freeimage.host: ${JSON.stringify(data)}`);
 	}
 
-	const uploadUrl = createPayload.upload_url;
-	if (!uploadUrl) {
-		throw new Error("Notion file upload create did not return an upload_url.");
-	}
-
-	const uploadForm = new FormData();
-	const fileBuffer = Buffer.from(imageBytes);
-	uploadForm.append("file", new Blob([fileBuffer], { type: mimeType }), fileName);
-	const sendResponse = await fetch(uploadUrl, {
-		method: "POST",
-		body: uploadForm,
-	});
-
-	if (!sendResponse.ok) {
-		throw new Error(`Notion file upload send failed: ${sendResponse.status}`);
-	}
-
-	return createPayload.id;
+	return data.image.url;
 }
 
 worker.tool<GenerateImageInput, string>("generateNanoBananaImage", {
@@ -111,15 +71,12 @@ worker.tool<GenerateImageInput, string>("generateNanoBananaImage", {
 			console.log(`Generating image from expanded prompt...`);
 			const generatedImage = await generateImage(expandedPrompt);
 
-			// 3. Upload image bytes via Notion File Upload API
-			console.log(`Uploading image binary via Notion File Upload API...`);
-			const fileUploadId = await uploadImageWithNotionFileApi(
-				notionApiKey,
-				generatedImage.bytes,
-				generatedImage.mimeType,
-			);
+			// 3. Upload image to Freeimage.host to get a public URL
+			console.log(`Uploading image binary to FreeImage.host...`);
+			const base64Image = Buffer.from(generatedImage.bytes).toString('base64');
+			const publicImageUrl = await uploadToFreeImageHost(base64Image);
 
-			console.log(`Uploading image to Notion page: ${page_id}`);
+			console.log(`Appending image to Notion page: ${page_id}`);
 			const notion = new Client({ auth: notionApiKey });
 			await notion.blocks.children.append({
 				block_id: page_id,
@@ -128,9 +85,9 @@ worker.tool<GenerateImageInput, string>("generateNanoBananaImage", {
 						object: 'block',
 						type: 'image',
 						image: {
-							type: "file_upload",
-							file_upload: {
-								id: fileUploadId,
+							type: "external",
+							external: {
+								url: publicImageUrl,
 							},
 						},
 					} as any,
@@ -153,7 +110,7 @@ worker.tool<GenerateImageInput, string>("generateNanoBananaImage", {
 
 			return `Successfully generated and uploaded image to Notion page ${page_id}.`;
 		} catch (e: any) {
-			console.error(`Error generating or uploading image: ${e.message}`);
+			console.error(`Error generating or uploading image: ${e.stack || e.message}`);
 			return `Failed to generate or upload image: ${e.message}`;
 		}
 	},
