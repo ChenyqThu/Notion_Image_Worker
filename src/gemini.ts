@@ -44,11 +44,21 @@ type GeneratedImage = {
     mimeType: string;
 };
 
-export async function generateImage(expandedPrompt: string): Promise<GeneratedImage> {
+type GenerateImageOptions = {
+	aspectRatio?: string;
+	imageSize?: string;
+};
+
+export async function generateImage(
+	expandedPrompt: string,
+	options: GenerateImageOptions = {},
+): Promise<GeneratedImage> {
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const imageModel =
         process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image-preview";
-    const imageAspectRatio = process.env.GEMINI_IMAGE_ASPECT_RATIO || "1:1";
+    const imageAspectRatio =
+		options.aspectRatio || process.env.GEMINI_IMAGE_ASPECT_RATIO || "1:1";
+	const imageSize = options.imageSize || process.env.GEMINI_IMAGE_SIZE;
     const response = await ai.models.generateContent({
         model: imageModel,
         contents: expandedPrompt,
@@ -56,6 +66,7 @@ export async function generateImage(expandedPrompt: string): Promise<GeneratedIm
             responseModalities: [Modality.IMAGE],
             imageConfig: {
                 aspectRatio: imageAspectRatio,
+				...(imageSize ? { imageSize } : {}),
             },
         },
     });

@@ -1,24 +1,65 @@
-import fetch from 'node-fetch'; // Or native fetch if available
-import FormData from 'form-data';
-import * as fs from 'fs';
+import dotenv from "dotenv";
 
-async function uploadToFreeImageHost(base64Image: string) {
-    const apiKey = '6d207e02198a847aa98d0a2a901485a5';
-    const form = new FormData();
-    form.append('key', apiKey);
-    form.append('action', 'upload');
-    form.append('source', base64Image);
-    form.append('format', 'json');
+dotenv.config();
 
-    const res = await fetch('https://freeimage.host/api/1/upload', {
-        method: 'POST',
-        body: form
-    });
+const NOTION_API_BASE_URL = "https://api.notion.com/v1";
+const NOTION_API_VERSION = "2022-06-28";
 
-    const data = await res.json();
-    console.log(data);
+async function uploadDummyImageToNotion() {
+	const notionApiKey = process.env.NOTION_API_KEY;
+	if (!notionApiKey) throw new Error("NOTION_API_KEY is required");
+
+	const dummyImage = Buffer.from(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+		"base64",
+	);
+
+	const createResponse = await fetch(`${NOTION_API_BASE_URL}/file_uploads`, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${notionApiKey}`,
+			"Notion-Version": NOTION_API_VERSION,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			filename: "dummy.png",
+			content_type: "image/png",
+			mode: "single_part",
+		}),
+	});
+
+	if (!createResponse.ok) {
+		throw new Error(
+			`Create upload failed: ${createResponse.status} ${await createResponse.text()}`,
+		);
+	}
+
+	const createPayload = (await createResponse.json()) as { id?: string; upload_url?: string };
+	if (!createPayload.id || !createPayload.upload_url) {
+		throw new Error(`Invalid create payload: ${JSON.stringify(createPayload)}`);
+	}
+
+	const form = new FormData();
+	form.append("file", new Blob([dummyImage], { type: "image/png" }), "dummy.png");
+	const sendResponse = await fetch(createPayload.upload_url, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${notionApiKey}`,
+			"Notion-Version": NOTION_API_VERSION,
+		},
+		body: form,
+	});
+
+	if (!sendResponse.ok) {
+		throw new Error(
+			`Send upload failed: ${sendResponse.status} ${await sendResponse.text()}`,
+		);
+	}
+
+	console.log(`Success, file_upload_id=${createPayload.id}`);
 }
 
-// Just a tiny 1x1 pixel base64 for testing
-const testBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-uploadToFreeImageHost(testBase64).catch(console.error);
+uploadDummyImageToNotion().catch((err) => {
+	console.error(err.stack || err.message);
+	process.exitCode = 1;
+});
